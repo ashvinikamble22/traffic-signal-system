@@ -1,90 +1,87 @@
+import streamlit as st
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 
+st.set_page_config(page_title="Smart Traffic Signal RL", layout="wide")
+
 # -----------------------------
-# ENVIRONMENT SETTINGS
+# PARAMETERS
 # -----------------------------
 
 NUM_LANES = 4
 MAX_CARS = 20
 ACTIONS = 4
-EPISODES = 1000
-STEPS_PER_EPISODE = 50
+EPISODES = 500
+STEPS = 50
 
 alpha = 0.1
 gamma = 0.9
 epsilon = 0.2
 
-# Q-table (3x3x3x3 states × 4 actions)
-Q = np.zeros((3,3,3,3,ACTIONS))
-
-
 # -----------------------------
-# HELPER FUNCTIONS
+# FUNCTIONS
 # -----------------------------
 
 def discretize(cars):
     return tuple(min(c // 7, 2) for c in cars)
 
-def choose_action(state):
-    if random.uniform(0,1) < epsilon:
-        return random.randint(0, ACTIONS-1)
-    return np.argmax(Q[state])
-
 def simulate_step(cars, action):
-    # Cars leave from green lane
     cars[action] = max(0, cars[action] - random.randint(3,6))
-
-    # New cars arrive randomly
     for i in range(NUM_LANES):
         cars[i] += random.randint(0,3)
         cars[i] = min(cars[i], MAX_CARS)
-
     reward = -sum(cars)
     return cars, reward
 
+def train_rl():
+    Q = np.zeros((3,3,3,3,ACTIONS))
+    rewards = []
 
-# -----------------------------
-# TRAIN RL AGENT
-# -----------------------------
+    for ep in range(EPISODES):
+        cars = [random.randint(0,10) for _ in range(NUM_LANES)]
+        total_reward = 0
 
-rl_rewards = []
+        for _ in range(STEPS):
+            state = discretize(cars)
 
-for episode in range(EPISODES):
+            if random.uniform(0,1) < epsilon:
+                action = random.randint(0, ACTIONS-1)
+            else:
+                action = np.argmax(Q[state])
+
+            new_cars, reward = simulate_step(cars.copy(), action)
+            new_state = discretize(new_cars)
+
+            Q[state][action] += alpha * (
+                reward + gamma * np.max(Q[new_state]) - Q[state][action]
+            )
+
+            cars = new_cars
+            total_reward += reward
+
+        rewards.append(total_reward)
+
+    return Q, rewards
+
+def test_model(Q):
     cars = [random.randint(0,10) for _ in range(NUM_LANES)]
     total_reward = 0
 
-    for step in range(STEPS_PER_EPISODE):
+    for _ in range(STEPS):
         state = discretize(cars)
-        action = choose_action(state)
-
-        new_cars, reward = simulate_step(cars.copy(), action)
-        new_state = discretize(new_cars)
-
-        # Q-learning update
-        Q[state][action] = Q[state][action] + alpha * (
-            reward + gamma * np.max(Q[new_state]) - Q[state][action]
-        )
-
-        cars = new_cars
+        action = np.argmax(Q[state])
+        cars, reward = simulate_step(cars, action)
         total_reward += reward
 
-    rl_rewards.append(total_reward)
+    return total_reward
 
-print("Training Complete!")
-
-
-# -----------------------------
-# FIXED TIMER SIMULATION
-# -----------------------------
-
-def fixed_timer_simulation():
+def fixed_timer():
     cars = [random.randint(0,10) for _ in range(NUM_LANES)]
     total_reward = 0
 
-    for step in range(STEPS_PER_EPISODE):
-        action = step % 4  # rotate signals
+    for step in range(STEPS):
+        action = step % 4
         cars, reward = simulate_step(cars, action)
         total_reward += reward
 
@@ -92,47 +89,38 @@ def fixed_timer_simulation():
 
 
 # -----------------------------
-# TEST RL VS FIXED
+# UI
 # -----------------------------
 
-def test_rl():
-    cars = [random.randint(0,10) for _ in range(NUM_LANES)]
-    total_reward = 0
+st.title("🚦 Smart Traffic Signal Using Reinforcement Learning")
 
-    for step in range(STEPS_PER_EPISODE):
-        state = discretize(cars)
-        action = np.argmax(Q[state])  # best learned action
-        cars, reward = simulate_step(cars, action)
-        total_reward += reward
+st.write("This system learns optimal signal timing to reduce traffic congestion.")
 
-    return total_reward
+if st.button("Train RL Model"):
+    with st.spinner("Training in progress..."):
+        Q, training_rewards = train_rl()
+        st.session_state["Q"] = Q
 
+    st.success("Training Complete!")
 
-rl_test = []
-fixed_test = []
-
-for _ in range(200):
-    rl_test.append(test_rl())
-    fixed_test.append(fixed_timer_simulation())
-
-print("Average RL Reward:", np.mean(rl_test))
-print("Average Fixed Timer Reward:", np.mean(fixed_test))
+    fig1 = plt.figure()
+    plt.plot(training_rewards)
+    plt.title("Training Performance")
+    plt.xlabel("Episodes")
+    plt.ylabel("Total Reward")
+    st.pyplot(fig1)
 
 
-# -----------------------------
-# PLOTS
-# -----------------------------
+if "Q" in st.session_state:
+    if st.button("Compare RL vs Fixed Timer"):
+        rl_result = np.mean([test_model(st.session_state["Q"]) for _ in range(50)])
+        fixed_result = np.mean([fixed_timer() for _ in range(50)])
 
-plt.figure()
-plt.plot(rl_rewards)
-plt.title("RL Training Performance")
-plt.xlabel("Episodes")
-plt.ylabel("Total Reward")
-plt.show()
+        fig2 = plt.figure()
+        plt.bar(["RL", "Fixed Timer"], [rl_result, fixed_result])
+        plt.ylabel("Average Reward")
+        plt.title("Performance Comparison")
+        st.pyplot(fig2)
 
-plt.figure()
-plt.bar(["RL", "Fixed Timer"], 
-        [np.mean(rl_test), np.mean(fixed_test)])
-plt.title("RL vs Fixed Timer Comparison")
-plt.ylabel("Average Reward")
-plt.show()
+        st.write("RL Average Reward:", rl_result)
+        st.write("Fixed Timer Average Reward:", fixed_result)
